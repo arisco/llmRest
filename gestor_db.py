@@ -143,8 +143,11 @@ def get_all_attached_filenames():
         port=5432
     )
     cur = conn.cursor()
-    cur.execute("SELECT filename FROM conversation_files ORDER BY uploaded_at DESC")
-    filenames = [row[0] for row in cur.fetchall()]
+    cur.execute("SELECT id, filename FROM conversation_files ORDER BY uploaded_at DESC")
+    files = [
+        {"id": row[0], "filename": row[1]}
+        for row in cur.fetchall()
+    ]
     cur.close()
     conn.close()
-    return filenames
+    return files

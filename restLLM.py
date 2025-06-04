@@ -68,9 +68,9 @@ async def chat_with_attachment(
         f"Received text: {text}, file: {file.filename if file else 'No file'}, conversation_id: {conversation_id}"
     )
     try:
-        file_content = ""
         file_bytes = None
         attached_file = None
+        file_content = ""
         if file is not None:
             file_bytes = await file.read()
             try:
@@ -83,23 +83,24 @@ async def chat_with_attachment(
                 "content": file_bytes,
             }
 
-        combined_text = text
-        if file_content:
-            combined_text += f"\n\n[Adjunto]:\n{file_content}"
-
         # 1. Obtén o crea la conversación
         conversation_id_result = get_or_create_conversation(
             user_id="anonymous", conversation_id=conversation_id
         )
         # 2. Guarda el mensaje del usuario
-        user_msg_id = save_message(conversation_id_result, "user", combined_text)
+        user_msg_id = save_message(conversation_id_result, "user", text)
         # 3. Si hay archivo, guárdalo
         if attached_file:
             save_file(user_msg_id, attached_file)
-        # 4. Llama al LLM
-        response = llm.invoke([HumanMessage(content=combined_text)])
+        # 4. Llama al LLM pasando el texto y el contenido del fichero como contexto
+        llm_input = text
+        if file_content:
+            llm_input += f"\n\n[Adjunto]:\n{file_content}"
+        response = llm.invoke([HumanMessage(content=llm_input)])
         # 5. Guarda la respuesta del asistente
         assistant_msg_id = save_message(conversation_id_result, "assistant", response.content)
+        print("DEBUG: assistant_msg_id =", assistant_msg_id)
+        logging.info(f"assistant_msg_id: {assistant_msg_id}")
         return JSONResponse(
             content={"response": response.content, "conversation_id": conversation_id_result}
         )
@@ -108,15 +109,16 @@ async def chat_with_attachment(
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.get("/documents")
-async def get_documents(user_id: str):
-    """
-    Devuelve la lista de documentos adjuntos para un usuario.
-    """
-    # Importa aquí para evitar error de import circular
-    from gestor_db import get_user_documents
-    documents = get_user_documents(user_id)
-    return {"documents": documents}
+# @app.get("/documents")
+# async def get_documents(user_id: str = None):
+#     """
+#     Devuelve la lista de documentos adjuntos para un usuario.
+#     """
+#     from gestor_db import get_user_documents
+#     if not user_id:
+#         return JSONResponse(status_code=400, content={"error": "user_id es requerido"})
+#     documents = get_user_documents(user_id)
+#     return {"documents": documents}
 
 
 @app.get("/chats")
@@ -143,13 +145,13 @@ async def get_chat(id: int):
 
 
 @app.get("/documents")
-async def get_documentas():
+async def get_documents():
     """
-    Devuelve un listado de nombres de todos los ficheros adjuntos.
+    Devuelve un listado de ids y nombres de todos los ficheros adjuntos.
     """
     from gestor_db import get_all_attached_filenames
-    filenames = get_all_attached_filenames()
-    return {"filenames": filenames}
+    files = get_all_attached_filenames()
+    return {"files": files}
 
 
 # Opcional: para desarrollo local
