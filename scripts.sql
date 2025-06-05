@@ -2,17 +2,25 @@
 CREATE TABLE conversations (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(255),
-    question TEXT,
-    response TEXT,
-    timestamp TIMESTAMP
+    created_at TIMESTAMP DEFAULT NOW()
 );
 
--- Tabla de archivos adjuntos
+-- Tabla de mensajes (necesaria para el funcionamiento del backend)
+CREATE TABLE messages (
+    id SERIAL PRIMARY KEY,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE CASCADE,
+    role VARCHAR(50),
+    content TEXT,
+    timestamp TIMESTAMP DEFAULT NOW()
+);
+
+DROP TABLE IF EXISTS conversation_files;
+
 CREATE TABLE conversation_files (
     id SERIAL PRIMARY KEY,
     conversation_id INTEGER REFERENCES conversations(id) ON DELETE CASCADE,
-    filename VARCHAR(255),
-    content_type VARCHAR(100),
+    filename TEXT,
+    content_type TEXT,
     content BYTEA,
     uploaded_at TIMESTAMP
 );
