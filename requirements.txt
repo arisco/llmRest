@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+psycopg2
+python-dotenv
+langchain
+langchain-community
+langchain-ollama
+PyPDF2
+# Para cargar PDFs con langchain_community.document_loaders
+pypdf
+# ...añade aquí otras dependencias según las vayas usando...

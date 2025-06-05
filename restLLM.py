@@ -13,6 +13,11 @@ from gestor_db import (
     save_file,
 )
 from typing import List, Optional
+from llm_wrapper import LLMWrapper  # <--- importa el wrapper externo
+from llm_service import process_llm_with_attachments  # Nuevo servicio para LLM y ficheros
+
+# Añade import para PyPDFLoader
+from langchain_community.document_loaders import PyPDFLoader
 
 app = FastAPI()
 
@@ -49,33 +54,6 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     text: str
     conversation_id: int | None = None  # Permite conversation_id opcional
-
-class LLMWrapper:
-    def __init__(self, mocked: bool = False):
-        self.mocked = mocked
-        if not mocked:
-            from langchain_ollama import ChatOllama
-            from langchain.schema import HumanMessage
-            self.ChatOllama = ChatOllama
-            self.HumanMessage = HumanMessage
-            self.llm = ChatOllama(model="llama4:scout")
-        else:
-            self.llm = None
-
-    def invoke(self, text: str, files_content: list[str] = None):
-        if self.mocked:
-            mock_response = "[MOCKED OLLAMA RESPONSE] Recibido: " + text
-            if files_content:
-                mock_response += "\n\n[Adjuntos]:\n" + "\n".join(files_content)
-            return mock_response
-        else:
-            # Real LLM call
-            llm_input = text
-            if files_content:
-                for fc in files_content:
-                    llm_input += f"\n\n[Adjunto]:\n{fc}"
-            response = self.llm.invoke([self.HumanMessage(content=llm_input)])
-            return response.content
 
 # Cambia a True para mock, False para real
 llm_wrapper = LLMWrapper(mocked=False)
@@ -115,30 +93,14 @@ async def chat_with_attachment(
         f"Received text: {text}, files: {[f.filename for f in files] if files else 'No files'}, conversation_id: {conversation_id}"
     )
     try:
-        attached_files = []
-        file_contents = []
-        if files:
-            for file in files:
-                file_bytes = await file.read()
-                try:
-                    file_content = file_bytes.decode("utf-8")
-                except UnicodeDecodeError:
-                    file_content = file_bytes.decode("latin-1")
-                attached_file = {
-                    "filename": file.filename,
-                    "content_type": file.content_type,
-                    "content": file_bytes,
-                }
-                attached_files.append(attached_file)
-                file_contents.append(file_content)
-        conversation_id_result = get_or_create_conversation(
-            user_id="anonymous", conversation_id=conversation_id
+        response_content, attached_files, conversation_id_result = await process_llm_with_attachments(
+            text, conversation_id, files
         )
-        user_msg_id = save_message(conversation_id_result, "user", text)
+        # Guarda archivos adjuntos en la base de datos
         for attached_file in attached_files:
             save_file(conversation_id_result, attached_file)
-        # Llama al LLM o mock
-        response_content = llm_wrapper.invoke(text, file_contents)
+        # Guarda el mensaje del usuario y la respuesta del asistente
+        user_msg_id = save_message(conversation_id_result, "user", text)
         assistant_msg_id = save_message(conversation_id_result, "assistant", response_content)
         return JSONResponse(
             content={"response": response_content, "conversation_id": conversation_id_result}
