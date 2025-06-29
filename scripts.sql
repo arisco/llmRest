@@ -2,8 +2,12 @@
 CREATE TABLE conversations (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(255),
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT NOW(),
+    
 );
+
+
+
 
 -- Tabla de mensajes (necesaria para el funcionamiento del backend)
 CREATE TABLE messages (

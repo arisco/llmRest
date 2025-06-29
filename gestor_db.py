@@ -33,7 +33,7 @@ print(f"DB_NAME: {DB_NAME}")
 
 logger = logging.getLogger("restllm")
 
-def get_or_create_conversation(user_id: str, conversation_id: int = None):
+def get_or_create_conversation(user_id: str, conversation_id: int = None, summary: str = None):
     try:
         conn = psycopg2.connect(
             dbname=DB_NAME,
@@ -51,10 +51,10 @@ def get_or_create_conversation(user_id: str, conversation_id: int = None):
                 cur.close()
                 conn.close()
                 return conversation_id
-        # Si no existe, crea una nueva
+        # Si no existe, crea una nueva (summary opcional)
         cur.execute(
-            "INSERT INTO conversations (user_id, created_at) VALUES (%s, %s) RETURNING id",
-            (user_id, datetime.utcnow())
+            "INSERT INTO conversations (user_id, created_at, summary) VALUES (%s, %s, %s) RETURNING id",
+            (user_id, datetime.utcnow(), summary)
         )
         new_id = cur.fetchone()[0]
         conn.commit()
@@ -63,6 +63,28 @@ def get_or_create_conversation(user_id: str, conversation_id: int = None):
         return new_id
     except Exception as e:
         logger.exception("Error in get_or_create_conversation")
+        raise
+
+def update_chat_summary(conversation_id: int, summary: str):
+    try:
+        conn = psycopg2.connect(
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT
+        )
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE conversations SET summary = %s WHERE id = %s",
+            (summary, conversation_id)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.exception("Error in update_chat_summary")
         raise
 
 def save_message(conversation_id: int, role: str, content: str):
@@ -129,13 +151,7 @@ def get_user_chats_summary(user_id: str):
         )
         cur = conn.cursor()
         cur.execute("""
-            SELECT c.id, COALESCE((
-                SELECT LEFT(m.content, 30)
-                FROM messages m
-                WHERE m.conversation_id = c.id AND m.role = 'user'
-                ORDER BY m.timestamp ASC
-                LIMIT 1
-            ), '') AS summary
+            SELECT c.id, COALESCE(c.summary, '') AS summary
             FROM conversations c
             WHERE c.user_id = %s
             ORDER BY c.created_at DESC

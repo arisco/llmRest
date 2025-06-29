@@ -11,6 +11,7 @@ from gestor_db import (
     get_or_create_conversation,
     save_message,
     save_file,
+    update_chat_summary,  # <--- nuevo import
 )
 from typing import List, Optional
 from llm_wrapper import LLMWrapper  # <--- importa el wrapper externo
@@ -27,7 +28,7 @@ from langchain.chains import ConversationChain
 from langchain_ollama import ChatOllama
 from threading import Lock
 import uuid
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import START, MessagesState, StateGraph
 from langchain_openai import ChatOpenAI
@@ -68,6 +69,9 @@ class ChatRequest(BaseModel):
     text: str
     conversation_id: int | None = None  # Permite conversation_id opcional
 
+class UpdateSummaryRequest(BaseModel):
+    summary: str
+
 # Cambia a True para mock, False para real
 llm_wrapper = LLMWrapper(mocked=False)
 
@@ -94,6 +98,21 @@ def get_langgraph_app_and_config(conversation_id: int):
     config = {"configurable": {"thread_id": conversation_id}}
     return app_graph, config
 
+def get_conversation_history(conversation_id: int):
+    """
+    Recupera el historial de la conversación desde la base de datos y lo convierte a mensajes LangChain.
+    """
+    from gestor_db import get_chat_by_id
+    chat = get_chat_by_id(conversation_id)
+    messages = []
+    if chat and "messages" in chat:
+        for msg in chat["messages"]:
+            if msg["role"] == "user":
+                messages.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                messages.append(AIMessage(content=msg["content"]))
+    return messages
+
 @app.get("/")
 async def root():
     return {"status": "ok"}
@@ -103,18 +122,23 @@ async def root():
 async def chat_endpoint(request: ChatRequest):
     logging.info(f"Received: {request}")
     try:
+        # Si no hay conversation_id, crea la conversación con el summary
+        summary = request.text[:30]
         conversation_id = get_or_create_conversation(
-            user_id="anonymous", conversation_id=request.conversation_id
+            user_id="anonymous", conversation_id=request.conversation_id, summary=summary
         )
         user_msg_id = save_message(conversation_id, "user", request.text)
 
+        # --- Recupera historial de la conversación ---
+        history_messages = get_conversation_history(conversation_id)
+        # Añade el nuevo mensaje del usuario
+        input_message = HumanMessage(content=request.text)
+        all_messages = history_messages + [input_message]
+
         # --- Conversación con memoria usando LangGraph ---
         app_graph, config = get_langgraph_app_and_config(conversation_id)
-        input_message = HumanMessage(content=request.text)
         response_content = ""
-        # Procesa el mensaje usando el grafo y recupera la respuesta
-        for event in app_graph.stream({"messages": [input_message]}, config, stream_mode="values"):
-            # Tomamos el último mensaje generado por el modelo
+        for event in app_graph.stream({"messages": all_messages}, config, stream_mode="values"):
             if event["messages"]:
                 response_content = event["messages"][-1].content
 
@@ -137,8 +161,18 @@ async def chat_with_attachment(
         f"Received text: {text}, files: {[f.filename for f in files] if files else 'No files'}, conversation_id: {conversation_id}"
     )
     try:
-        response_content, attached_files, conversation_id_result = await process_llm_with_attachments(
-            text, conversation_id, files
+        # --- Recupera historial de la conversación ---
+        conversation_id_result = get_or_create_conversation(
+            user_id="anonymous", conversation_id=conversation_id, summary=text[:30]
+        )
+        history_messages = get_conversation_history(conversation_id_result)
+        input_message = HumanMessage(content=text)
+        all_messages = history_messages + [input_message]
+
+        # --- Procesa el mensaje y adjuntos usando el contexto de la conversación ---
+        # Si process_llm_with_attachments soporta mensajes, pásalos. Si no, adapta la función.
+        response_content, attached_files, _ = await process_llm_with_attachments(
+            text, conversation_id_result, files, messages=all_messages
         )
         # Guarda archivos adjuntos en la base de datos
         for attached_file in attached_files:
@@ -272,6 +306,19 @@ async def rag_query_document(idDocumento: int, prompt: str = Body(..., embed=Tru
         return result
     except Exception as e:
         logging.exception("Error en consulta RAG: " + str(e))
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.put("/chat/{chat_id}/summary")
+async def update_chat_summary_endpoint(chat_id: int, req: UpdateSummaryRequest):
+    """
+    Actualiza el campo summary de un chat.
+    """
+    try:
+        update_chat_summary(chat_id, req.summary)
+        return {"status": "ok", "chat_id": chat_id, "summary": req.summary}
+    except Exception as e:
+        logging.exception("Error updating chat summary")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 

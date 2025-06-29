@@ -59,7 +59,7 @@ except ImportError as e:
 
 
 
-async def process_llm_with_attachments(text, conversation_id, files):
+async def process_llm_with_attachments(text, conversation_id, files, messages=None):
     attached_files = []
     file_contents = []
     temp_pdf_paths = []
@@ -157,7 +157,18 @@ async def process_llm_with_attachments(text, conversation_id, files):
         user_id="anonymous", conversation_id=conversation_id
     )
     try:
-        response_content = llm_wrapper.invoke(text, file_contents)
+        # --- Usa el historial de mensajes si está disponible ---
+        if messages and isinstance(messages, list) and len(messages) > 0:
+            # Construye el contexto concatenando los mensajes previos
+            context = ""
+            for msg in messages[:-1]:
+                if hasattr(msg, "content"):
+                    context += f"{msg.content}\n"
+            # El último mensaje es el actual (usuario)
+            prompt = context + (messages[-1].content if hasattr(messages[-1], "content") else text)
+            response_content = llm_wrapper.invoke(prompt, file_contents)
+        else:
+            response_content = llm_wrapper.invoke(text, file_contents)
         # Limpia los archivos temporales
         for path in temp_pdf_paths + temp_img_paths + temp_epub_paths:
             try:
