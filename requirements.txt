@@ -16,3 +16,4 @@ torchaudio
 transformers
 ebooklib
 beautifulsoup4
+langgraph

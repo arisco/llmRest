@@ -26,6 +26,11 @@ from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationChain
 from langchain_ollama import ChatOllama
 from threading import Lock
+import uuid
+from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import START, MessagesState, StateGraph
+from langchain_openai import ChatOpenAI
 
 app = FastAPI()
 
@@ -66,22 +71,28 @@ class ChatRequest(BaseModel):
 # Cambia a True para mock, False para real
 llm_wrapper = LLMWrapper(mocked=False)
 
-# Memoria de conversación por usuario/conversación (simple dict en memoria)
-conversation_memories = {}
-conversation_memories_lock = Lock()
+# --- Sustituye ConversationChain por LangGraph ---
 
-def get_conversation_chain(conversation_id: int):
-    """
-    Recupera o crea una ConversationChain para el id de conversación dado.
-    """
-    with conversation_memories_lock:
-        if conversation_id not in conversation_memories:
-            # Usa el modelo real o mock según configuración
-            llm = ChatOllama(model="llama4:scout")
-            memory = ConversationBufferMemory()
-            conversation_memories[conversation_id] = ConversationChain(llm=llm, memory=memory, verbose=False)
-        return conversation_memories[conversation_id]
+# Define el grafo y el modelo globalmente
+workflow = StateGraph(state_schema=MessagesState)
+model = ChatOllama(model="llama4:scout")  # Usa el modelo Ollama actual
 
+def call_model(state: MessagesState):
+    response = model.invoke(state["messages"])
+    return {"messages": response}
+
+workflow.add_edge(START, "model")
+workflow.add_node("model", call_model)
+
+memory = MemorySaver()
+app_graph = workflow.compile(checkpointer=memory)
+
+def get_langgraph_app_and_config(conversation_id: int):
+    """
+    Devuelve el grafo langgraph y la config para el conversation_id.
+    """
+    config = {"configurable": {"thread_id": conversation_id}}
+    return app_graph, config
 
 @app.get("/")
 async def root():
@@ -97,9 +108,15 @@ async def chat_endpoint(request: ChatRequest):
         )
         user_msg_id = save_message(conversation_id, "user", request.text)
 
-        # --- Conversación con memoria ---
-        conversation_chain = get_conversation_chain(conversation_id)
-        response_content = conversation_chain.predict(input=request.text)
+        # --- Conversación con memoria usando LangGraph ---
+        app_graph, config = get_langgraph_app_and_config(conversation_id)
+        input_message = HumanMessage(content=request.text)
+        response_content = ""
+        # Procesa el mensaje usando el grafo y recupera la respuesta
+        for event in app_graph.stream({"messages": [input_message]}, config, stream_mode="values"):
+            # Tomamos el último mensaje generado por el modelo
+            if event["messages"]:
+                response_content = event["messages"][-1].content
 
         assistant_msg_id = save_message(conversation_id, "assistant", response_content)
         return JSONResponse(
