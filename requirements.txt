@@ -9,3 +9,10 @@ PyPDF2
 # Para cargar PDFs con langchain_community.document_loaders
 pypdf
 # ...añade aquí otras dependencias según las vayas usando...
+pillow
+torch
+torchvision
+torchaudio
+transformers
+ebooklib
+beautifulsoup4

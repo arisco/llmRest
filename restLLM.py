@@ -14,10 +14,18 @@ from gestor_db import (
 )
 from typing import List, Optional
 from llm_wrapper import LLMWrapper  # <--- importa el wrapper externo
-from llm_service import process_llm_with_attachments  # Nuevo servicio para LLM y ficheros
+from llm_service import process_llm_with_attachments, vectorize_document_to_mongo  # Nuevo servicio para LLM y ficheros
 
 # Añade import para PyPDFLoader
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_core.documents import Document
+from pymongo import MongoClient
+from langchain_ollama import OllamaEmbeddings
+from langchain_mongodb import MongoDBAtlasVectorSearch
+from langchain.memory import ConversationBufferMemory
+from langchain.chains import ConversationChain
+from langchain_ollama import ChatOllama
+from threading import Lock
 
 app = FastAPI()
 
@@ -58,6 +66,22 @@ class ChatRequest(BaseModel):
 # Cambia a True para mock, False para real
 llm_wrapper = LLMWrapper(mocked=False)
 
+# Memoria de conversación por usuario/conversación (simple dict en memoria)
+conversation_memories = {}
+conversation_memories_lock = Lock()
+
+def get_conversation_chain(conversation_id: int):
+    """
+    Recupera o crea una ConversationChain para el id de conversación dado.
+    """
+    with conversation_memories_lock:
+        if conversation_id not in conversation_memories:
+            # Usa el modelo real o mock según configuración
+            llm = ChatOllama(model="llama4:scout")
+            memory = ConversationBufferMemory()
+            conversation_memories[conversation_id] = ConversationChain(llm=llm, memory=memory, verbose=False)
+        return conversation_memories[conversation_id]
+
 
 @app.get("/")
 async def root():
@@ -72,8 +96,11 @@ async def chat_endpoint(request: ChatRequest):
             user_id="anonymous", conversation_id=request.conversation_id
         )
         user_msg_id = save_message(conversation_id, "user", request.text)
-        # Llama al LLM o mock
-        response_content = llm_wrapper.invoke(request.text)
+
+        # --- Conversación con memoria ---
+        conversation_chain = get_conversation_chain(conversation_id)
+        response_content = conversation_chain.predict(input=request.text)
+
         assistant_msg_id = save_message(conversation_id, "assistant", response_content)
         return JSONResponse(
             content={"response": response_content, "conversation_id": conversation_id}
@@ -202,6 +229,44 @@ async def delete_chat(chat_id: int):
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+
+@app.post("/rag/save/{idDocumento}")
+async def rag_save_document(idDocumento: int):
+    """
+    Recupera un documento adjunto por id, lo vectoriza y lo añade a la base de datos MongoDB Atlas Vector Search.
+    """
+    try:
+        result = await vectorize_document_to_mongo(idDocumento)
+        return result
+    except Exception as e:
+        logging.exception("Error en vectorización RAG" +  str(e))
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/rag/query/{idDocumento}")
+async def rag_query_document(idDocumento: int, prompt: str = Body(..., embed=True)):
+    """
+    Realiza una consulta (prompt) sobre el documento vectorizado en MongoDB Atlas Vector Search.
+    """
+    try:
+        from llm_service import query_vectorized_document
+        # Asegúrate de que la función existe y está correctamente importada
+        result = await query_vectorized_document(idDocumento, prompt)
+        return result
+    except Exception as e:
+        logging.exception("Error en consulta RAG: " + str(e))
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# Configuración de logging para consola y archivo
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.StreamHandler(),  # Consola
+        logging.FileHandler("restllm.log", encoding="utf-8")  # Archivo
+    ]
+)
 
 # Opcional: para desarrollo local
 if __name__ == "__main__":

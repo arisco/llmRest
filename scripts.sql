@@ -22,5 +22,6 @@ CREATE TABLE conversation_files (
     filename TEXT,
     content_type TEXT,
     content BYTEA,
-    uploaded_at TIMESTAMP
+    uploaded_at TIMESTAMP,
+    id_mongo TEXT -- Nuevo campo para almacenar el id de MongoDB Atlas
 );

@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 import psycopg2
 from datetime import datetime
 import re
+import logging
 
 # Carga las variables del .env
 load_dotenv()
@@ -30,248 +31,311 @@ print(f"DB_HOST: {DB_HOST}")
 print(f"DB_PORT: {DB_PORT}")
 print(f"DB_NAME: {DB_NAME}")
 
+logger = logging.getLogger("restllm")
+
 def get_or_create_conversation(user_id: str, conversation_id: int = None):
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT
-    )
-    cur = conn.cursor()
-    if conversation_id:
-        # Verifica que exista
-        cur.execute("SELECT id FROM conversations WHERE id = %s AND user_id = %s", (conversation_id, user_id))
-        row = cur.fetchone()
-        if row:
-            cur.close()
-            conn.close()
-            return conversation_id
-    # Si no existe, crea una nueva
-    cur.execute(
-        "INSERT INTO conversations (user_id, created_at) VALUES (%s, %s) RETURNING id",
-        (user_id, datetime.utcnow())
-    )
-    new_id = cur.fetchone()[0]
-    conn.commit()
-    cur.close()
-    conn.close()
-    return new_id
+    try:
+        conn = psycopg2.connect(
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT
+        )
+        cur = conn.cursor()
+        if conversation_id:
+            # Verifica que exista
+            cur.execute("SELECT id FROM conversations WHERE id = %s AND user_id = %s", (conversation_id, user_id))
+            row = cur.fetchone()
+            if row:
+                cur.close()
+                conn.close()
+                return conversation_id
+        # Si no existe, crea una nueva
+        cur.execute(
+            "INSERT INTO conversations (user_id, created_at) VALUES (%s, %s) RETURNING id",
+            (user_id, datetime.utcnow())
+        )
+        new_id = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        conn.close()
+        return new_id
+    except Exception as e:
+        logger.exception("Error in get_or_create_conversation")
+        raise
 
 def save_message(conversation_id: int, role: str, content: str):
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT
-    )
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO messages (conversation_id, role, content, timestamp) VALUES (%s, %s, %s, %s) RETURNING id",
-        (conversation_id, role, content, datetime.utcnow())
-    )
-    message_id = cur.fetchone()[0]
-    conn.commit()
-    cur.close()
-    conn.close()
-    return message_id
+    try:
+        conn = psycopg2.connect(
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT
+        )
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO messages (conversation_id, role, content, timestamp) VALUES (%s, %s, %s, %s) RETURNING id",
+            (conversation_id, role, content, datetime.utcnow())
+        )
+        message_id = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        conn.close()
+        return message_id
+    except Exception as e:
+        logger.exception("Error in save_message")
+        raise
 
 def save_file(conversation_id: int, attached_file: dict):
     """
     Guarda un archivo adjunto asociado a una conversación.
     """
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT
-    )
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO conversation_files (conversation_id, filename, content_type, content, uploaded_at)
-        VALUES (%s, %s, %s, %s, %s)
-    """, (
-        conversation_id,
-        attached_file["filename"],
-        attached_file.get("content_type", "application/octet-stream"),
-        psycopg2.Binary(attached_file["content"]),
-        datetime.utcnow()
-    ))
-    conn.commit()
-    cur.close()
-    conn.close()
+    try:
+        conn = psycopg2.connect(
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT
+        )
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO conversation_files (conversation_id, filename, content_type, content, uploaded_at)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (
+            conversation_id,
+            attached_file["filename"],
+            attached_file.get("content_type", "application/octet-stream"),
+            psycopg2.Binary(attached_file["content"]),
+            datetime.utcnow()
+        ))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.exception("Error in save_file")
+        raise
 
 def get_user_chats_summary(user_id: str):
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT
-    )
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT c.id, COALESCE((
-            SELECT LEFT(m.content, 30)
-            FROM messages m
-            WHERE m.conversation_id = c.id AND m.role = 'user'
-            ORDER BY m.timestamp ASC
-            LIMIT 1
-        ), '') AS summary
-        FROM conversations c
-        WHERE c.user_id = %s
-        ORDER BY c.created_at DESC
-    """, (user_id,))
-    chats = [
-        {
-            "conversation_id": row[0],
-            "summary": row[1]
-        }
-        for row in cur.fetchall()
-    ]
-    cur.close()
-    conn.close()
-    return chats
+    try:
+        conn = psycopg2.connect(
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT
+        )
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT c.id, COALESCE((
+                SELECT LEFT(m.content, 30)
+                FROM messages m
+                WHERE m.conversation_id = c.id AND m.role = 'user'
+                ORDER BY m.timestamp ASC
+                LIMIT 1
+            ), '') AS summary
+            FROM conversations c
+            WHERE c.user_id = %s
+            ORDER BY c.created_at DESC
+        """, (user_id,))
+        chats = [
+            {
+                "conversation_id": row[0],
+                "summary": row[1]
+            }
+            for row in cur.fetchall()
+        ]
+        cur.close()
+        conn.close()
+        return chats
+    except Exception as e:
+        logger.exception("Error in get_user_chats_summary")
+        raise
 
 def get_chat_by_id(conversation_id: int):
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT
-    )
-    cur = conn.cursor()
-    # Recupera los mensajes de la conversación ordenados por timestamp
-    cur.execute("""
-        SELECT m.role, m.content, m.timestamp
-        FROM messages m
-        WHERE m.conversation_id = %s
-        ORDER BY m.timestamp ASC
-    """, (conversation_id,))
-    messages = [
-        {
-            "role": row[0],
-            "content": row[1],
-            "timestamp": row[2]
+    try:
+        conn = psycopg2.connect(
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT
+        )
+        cur = conn.cursor()
+        # Recupera los mensajes de la conversación ordenados por timestamp
+        cur.execute("""
+            SELECT m.role, m.content, m.timestamp
+            FROM messages m
+            WHERE m.conversation_id = %s
+            ORDER BY m.timestamp ASC
+        """, (conversation_id,))
+        messages = [
+            {
+                "role": row[0],
+                "content": row[1],
+                "timestamp": row[2]
+            }
+            for row in cur.fetchall()
+        ]
+        # Recupera los documentos asociados a la conversación
+        cur.execute("""
+            SELECT id, filename, content_type, uploaded_at
+            FROM conversation_files
+            WHERE conversation_id = %s
+            ORDER BY uploaded_at ASC
+        """, (conversation_id,))
+        documents = [
+            {
+                "id": row[0],
+                "filename": row[1],
+                "content_type": row[2],
+                "uploaded_at": row[3]
+            }
+            for row in cur.fetchall()
+        ]
+        cur.close()
+        conn.close()
+        return {
+            "conversation_id": conversation_id,
+            "messages": messages,
+            "documents": documents
         }
-        for row in cur.fetchall()
-    ]
-    # Recupera los documentos asociados a la conversación
-    cur.execute("""
-        SELECT id, filename, content_type, uploaded_at
-        FROM conversation_files
-        WHERE conversation_id = %s
-        ORDER BY uploaded_at ASC
-    """, (conversation_id,))
-    documents = [
-        {
-            "id": row[0],
-            "filename": row[1],
-            "content_type": row[2],
-            "uploaded_at": row[3]
-        }
-        for row in cur.fetchall()
-    ]
-    cur.close()
-    conn.close()
-    return {
-        "conversation_id": conversation_id,
-        "messages": messages,
-        "documents": documents
-    }
+    except Exception as e:
+        logger.exception("Error in get_chat_by_id")
+        raise
 
 def get_all_attached_filenames():
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT
-    )
-    cur = conn.cursor()
-    cur.execute("SELECT id, filename, conversation_id FROM conversation_files ORDER BY uploaded_at DESC")
-    files = [
-        {"id": row[0], "filename": row[1], "conversation_id": row[2]}
-        for row in cur.fetchall()
-    ]
-    cur.close()
-    conn.close()
-    return files
+    try:
+        conn = psycopg2.connect(
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT
+        )
+        cur = conn.cursor()
+        cur.execute("SELECT id, filename, conversation_id, id_mongo FROM conversation_files ORDER BY uploaded_at DESC")
+        files = [
+            {"id": row[0], "filename": row[1], "conversation_id": row[2], "id_mongo": row[3]}
+            for row in cur.fetchall()
+        ]
+        cur.close()
+        conn.close()
+        return files
+    except Exception as e:
+        logger.exception("Error in get_all_attached_filenames")
+        raise
 
 def get_attached_file_by_id(file_id: int):
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT
-    )
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT filename, content_type, content, conversation_id
-        FROM conversation_files
-        WHERE id = %s
-    """, (file_id,))
-    row = cur.fetchone()
-    cur.close()
-    conn.close()
-    if row:
-        return {
-            "filename": row[0],
-            "content_type": row[1],
-            "content": row[2],
-            "conversation_id": row[3]
-        }
-    else:
-        return None
+    try:
+        conn = psycopg2.connect(
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT
+        )
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT filename, content_type, content, conversation_id, id_mongo
+            FROM conversation_files
+            WHERE id = %s
+        """, (file_id,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row:
+            return {
+                "filename": row[0],
+                "content_type": row[1],
+                "content": row[2],
+                "conversation_id": row[3],
+                "id_mongo": row[4]
+            }
+        else:
+            return None
+    except Exception as e:
+        logger.exception("Error in get_attached_file_by_id")
+        raise
 
 def delete_attached_file_by_id(file_id: int):
-    """
-    Elimina un archivo adjunto por su id.
-    Devuelve True si se eliminó, False si no existía.
-    """
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT
-    )
-    cur = conn.cursor()
-    cur.execute("DELETE FROM conversation_files WHERE id = %s", (file_id,))
-    deleted = cur.rowcount > 0
-    conn.commit()
-    cur.close()
-    conn.close()
-    return deleted
+    try:
+        """
+        Elimina un archivo adjunto por su id.
+        Devuelve True si se eliminó, False si no existía.
+        """
+        conn = psycopg2.connect(
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT
+        )
+        cur = conn.cursor()
+        cur.execute("DELETE FROM conversation_files WHERE id = %s", (file_id,))
+        deleted = cur.rowcount > 0
+        conn.commit()
+        cur.close()
+        conn.close()
+        return deleted
+    except Exception as e:
+        logger.exception("Error in delete_attached_file_by_id")
+        raise
 
 def delete_chat_by_id(chat_id: int):
-    """
-    Elimina un chat (conversación), sus mensajes y archivos asociados.
-    Devuelve True si se eliminó, False si no existía.
-    """
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT
-    )
-    cur = conn.cursor()
-    # Elimina archivos asociados a la conversación
-    cur.execute("""
-        DELETE FROM conversation_files
-        WHERE conversation_id = %s
-    """, (chat_id,))
-    # Elimina los mensajes de la conversación
-    cur.execute("DELETE FROM messages WHERE conversation_id = %s", (chat_id,))
-    # Elimina la conversación
-    cur.execute("DELETE FROM conversations WHERE id = %s", (chat_id,))
-    deleted = cur.rowcount > 0
-    conn.commit()
-    cur.close()
-    conn.close()
-    return deleted
+    try:
+        """
+        Elimina un chat (conversación), sus mensajes y archivos asociados.
+        Devuelve True si se eliminó, False si no existía.
+        """
+        conn = psycopg2.connect(
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT
+        )
+        cur = conn.cursor()
+        # Elimina archivos asociados a la conversación
+        cur.execute("""
+            DELETE FROM conversation_files
+            WHERE conversation_id = %s
+        """, (chat_id,))
+        # Elimina los mensajes de la conversación
+        cur.execute("DELETE FROM messages WHERE conversation_id = %s", (chat_id,))
+        # Elimina la conversación
+        cur.execute("DELETE FROM conversations WHERE id = %s", (chat_id,))
+        deleted = cur.rowcount > 0
+        conn.commit()
+        cur.close()
+        conn.close()
+        return deleted
+    except Exception as e:
+        logger.exception("Error in delete_chat_by_id")
+        raise
+
+def save_mongo_id_for_file(file_id: int, mongo_id: str):
+    try:
+        """
+        Guarda el id de mongo (vector store) en la columna id_mongo de la tabla conversation_files.
+        """
+        conn = psycopg2.connect(
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT
+        )
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE conversation_files SET id_mongo = %s WHERE id = %s",
+            (mongo_id, file_id)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.exception("Error in save_mongo_id_for_file")
+        raise
